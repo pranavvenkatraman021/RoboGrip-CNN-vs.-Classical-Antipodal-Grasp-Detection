@@ -74,14 +74,14 @@ def visualize(base_path, pcd_id):
     ax.imshow(img)
 
     for rect in pos_rects: 
-        closed = np.vstack[rect, rect[0]]
+        closed = np.vstack([rect, rect[0]])
         ax.plot(closed[:, 0], closed[:, 1], 'g-', linewidth = 2)
     
     ax.set_title(f"pcd{pcd_id} — {len(pos_rects)} positive grasps")
     plt.show() 
 
 if __name__ == "__main__":
-    visualize("Cornell Grasp Data/01", "0100")
+    visualize("/Users/pranavvenkatraman/Downloads/Cornell Grasp Data/01", "0105")
 
 
     
