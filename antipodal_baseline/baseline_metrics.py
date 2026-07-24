@@ -4,7 +4,7 @@ import glob
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from data_loading import load_depth, load_rgb, parse_grasp_rectangles
+from data_handling.data_loading import load_depth, load_rgb, parse_grasp_rectangles
 
 #loads every background photo once
 def load_backgrounds(backgrounds_dir):

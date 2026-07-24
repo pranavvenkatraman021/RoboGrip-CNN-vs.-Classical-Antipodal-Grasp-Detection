@@ -4,8 +4,8 @@ import json
 import numpy as np
 
 from shapely.geometry import Polygon
-from data_loading import load_rgb, parse_grasp_rectangles, convert
-from baseline_metrics import (
+from data_handling.data_loading import load_rgb, parse_grasp_rectangles, convert
+from antipodal_baseline.baseline_metrics import (
     load_backgrounds, create_mask, get_largest_contour, estimate_normals, 
     find_best_antipodal_pair, pair_to_grasp_rectangle, xywh_theta_to_corners
 )
