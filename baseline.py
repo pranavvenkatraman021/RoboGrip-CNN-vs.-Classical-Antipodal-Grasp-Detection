@@ -4,7 +4,7 @@ import glob
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from data_handling.data_loading import load_depth, load_rgb, parse_grasp_rectangles
+from data_loading import load_depth, load_rgb, parse_grasp_rectangles
 
 #loads every background photo once
 def load_backgrounds(backgrounds_dir):
@@ -175,7 +175,7 @@ def xywh_theta_to_corners(x, y, w, h, theta_deg):
 
 
 #runnining full baseline on one object + visualization
-def run_baseline(base_path, pcd_id, backgrounds_dir, min_dist = 30, max_dist = 150):
+def run_baseline(base_path, pcd_id, backgrounds_dir, min_dist = 19, max_dist = 90):
    img = load_rgb(base_path, pcd_id)
    #depth is no longer needed for masking — RGB background subtraction replaced it
 

@@ -5,7 +5,7 @@ import cv2
 import torch
 from torch.utils.data import Dataset
 
-from data_handling.data_loading import load_rgb, load_depth, parse_grasp_rectangles, convert
+from data_loading import load_rgb, load_depth, parse_grasp_rectangles, convert
 
 IMG_SIZE = 224
 

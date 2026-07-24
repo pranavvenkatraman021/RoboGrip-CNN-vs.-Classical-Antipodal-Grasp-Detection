@@ -4,8 +4,8 @@ import json
 import numpy as np
 
 from shapely.geometry import Polygon
-from data_handling.data_loading import load_rgb, parse_grasp_rectangles, convert
-from antipodal_baseline.baseline_metrics import (
+from data_loading import load_rgb, parse_grasp_rectangles, convert
+from baseline import (
     load_backgrounds, create_mask, get_largest_contour, estimate_normals, 
     find_best_antipodal_pair, pair_to_grasp_rectangle, xywh_theta_to_corners
 )
@@ -73,11 +73,11 @@ def predict_one(base_path, pcd_id, backgrounds, min_dist=30, max_dist=150):
     return predicted_corners
 
 #runs baseline across whole test split computing accuracy
-def evaluate_baseline(dataset_root, backgrounds_dir, split_path="dataset_split.json"):
+def evaluate_baseline(dataset_root, backgrounds_dir, split_path="dataset_split.json", min_dist = 19, max_dist = 90):
     with open(split_path, "r") as f:
         split = json.load(f)
 
-    test_ids = split["train"]  #each entry is {"id": "...", "folder": "..."}
+    test_ids = split["test"]  #each entry is {"id": "...", "folder": "..."}
     backgrounds = load_backgrounds(backgrounds_dir)
 
     total = 0       
@@ -88,7 +88,7 @@ def evaluate_baseline(dataset_root, backgrounds_dir, split_path="dataset_split.j
         pcd_id = entry["id"]
         folder = entry["folder"]
 
-        pred_corners = predict_one(folder, pcd_id, backgrounds)
+        pred_corners = predict_one(folder, pcd_id, backgrounds, min_dist=min_dist, max_dist=max_dist)
 
         if pred_corners is None:
             skipped += 1

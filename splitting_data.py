@@ -18,6 +18,9 @@ def get_ids():
        if not os.path.isdir(folder):
            continue
        #each rgb image file
+       if os.path.basename(folder) == "backgrounds":
+            continue 
+       
        rgb_files = glob.glob(os.path.join(folder, "*r.png"))
 
        #isolate ID number
