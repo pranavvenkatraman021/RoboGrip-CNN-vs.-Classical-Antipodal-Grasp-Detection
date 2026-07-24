@@ -50,7 +50,7 @@ def parse_grasp_rectangles(filepath):
        rectangles.append(np.array(group))
 
    return rectangles
-
+"""
 #convert rectangle to (x, y, w, h, theta)
 def convert(rectangle):
    center = rectangle.mean(axis = 0)
@@ -62,6 +62,25 @@ def convert(rectangle):
   
    theta = np.degrees(np.arctan2(edge[1], edge[0]))
    return center[0], center[1], w, h, theta
+
+   """
+
+def convert(corners):
+    center = corners.mean(axis=0)
+
+    edge1 = corners[1] - corners[0]
+    edge2 = corners[2] - corners[1]
+
+    len1 = np.linalg.norm(edge1)
+    len2 = np.linalg.norm(edge2)
+
+    if len1 >= len2:
+        w, h, main_edge = len1, len2, edge1
+    else:
+        w, h, main_edge = len2, len1, edge2
+
+    theta = np.degrees(np.arctan2(main_edge[1], main_edge[0]))
+    return center[0], center[1], w, h, theta
 
 #loads image and positive grasp rectangles
 def visualize(base_path, pcd_id):
