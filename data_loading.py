@@ -3,6 +3,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
+
 #defines a centered rectangular region, excluding a margin from each edge --
 #mirrors the same ROI insight from baseline.py's classical pipeline
 #(see get_roi_bounds there): objects in this dataset are always placed

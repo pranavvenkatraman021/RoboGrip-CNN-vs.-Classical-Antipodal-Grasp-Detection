@@ -90,6 +90,7 @@ class GraspDataset(Dataset):
         combined = combined.transpose(2, 0, 1)
         image_tensor = torch.tensor(combined, dtype=torch.float32)
 
+
         x, y, w, h, theta_deg = convert(chosen_rect)
 
         #CHANGED: scale relative to the CROP's size, not the original

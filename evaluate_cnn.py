@@ -11,6 +11,7 @@ from evaluate_baseline import rectangle_iou, is_correct_grasp
 
 IMG_SIZE = 224
 
+
 #loads trained model weights
 def load_trained_model(weights_path="grasp_model_best.pth"):
     model = GraspNet()
