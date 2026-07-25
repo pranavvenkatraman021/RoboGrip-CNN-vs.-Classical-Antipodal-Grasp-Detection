@@ -144,7 +144,7 @@ def find_best_antipodal_pair(contour, normals, min_dist, max_dist, sample_step=4
     return best_pair, best_score
 
 #converts an antipodal point pair into a grasp rectangle (x, y, w, h, theta)
-def pair_to_grasp_rectangle(point_a, point_b, plate_thickness=25):
+def pair_to_grasp_rectangle(point_a, point_b, plate_thickness=30):
     center = (point_a + point_b) / 2
     w = np.linalg.norm(point_b - point_a)
     h = plate_thickness

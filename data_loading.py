@@ -35,7 +35,7 @@ def parse_grasp_rectangles(filepath):
            x, y = float(parts[0]), float(parts[1])
            points.append((x, y))
        except ValueError:
-           points.append(np.nan, np.nan)
+           points.append((np.nan, np.nan))
 
    #every four points becomes a rectangle
    rectangles = []
