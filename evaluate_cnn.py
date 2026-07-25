@@ -61,7 +61,7 @@ def output_to_corners(output, orig_w, orig_h):
     return xywh_theta_to_corners(x, y, w, h, theta)
 
 #runs CNN across test split and computes accuracy
-def evaluate_cnn(split_path="dataset_split.json", weights_path="grasp_model.pth"):
+def evaluate_cnn(split_path="dataset_split.json", weights_path="grasp_model_best.pth"):
     model = load_trained_model(weights_path)
 
     with open(split_path, "r") as f:

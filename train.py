@@ -33,13 +33,13 @@ def train():
 
     #Adam optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr = 1e-4)
-    num_epochs = 20
+    num_epochs = 40
     train_losses = []
     val_losses = []
 
     #FIX: initialize these ONCE, before the loop, not inside it
     best_val_loss = float("inf")
-    patience = 5
+    patience = 10
     epochs_without_improvement = 0
 
     for epoch in range(num_epochs): 
