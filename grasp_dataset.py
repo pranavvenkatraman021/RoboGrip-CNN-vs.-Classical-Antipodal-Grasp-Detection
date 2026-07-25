@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import torch
 from torch.utils.data import Dataset
+import os
 
 from data_loading import load_rgb, load_depth, parse_grasp_rectangles, convert
 
@@ -11,9 +12,35 @@ IMG_SIZE = 224
 
 #loads one (image, grasp label) pair 
 class GraspDataset(Dataset): 
-    def __init__(self, entries): 
-        #entries are a list of {"id":, "folder": dicts}
-        self.entries = entries
+    def __init__(self, entries):
+        #filter out any entries whose RGB or depth file can't actually
+        #be read, so this never happens mid-training instead
+        valid_entries = []
+        skipped = 0
+
+        for entry in entries:
+            pcd_id = entry["id"]
+            folder = entry["folder"]
+
+            rgb_path = f"{folder}/pcd{pcd_id}r.png"
+            depth_path = f"{folder}/pcd{pcd_id}d.tiff"
+
+            if not os.path.exists(rgb_path) or not os.path.exists(depth_path):
+                skipped += 1
+                continue
+
+            #actually try loading them, not just checking they exist --
+            #catches files that exist but are corrupted/unreadable
+            rgb_check = cv2.imread(rgb_path)
+            depth_check = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+            if rgb_check is None or depth_check is None:
+                skipped += 1
+                continue
+
+            valid_entries.append(entry)
+
+        print(f"GraspDataset: {len(valid_entries)} valid, {skipped} skipped (unreadable files)")
+        self.entries = valid_entries
 
     def __len__(self): 
         return len(self.entries)

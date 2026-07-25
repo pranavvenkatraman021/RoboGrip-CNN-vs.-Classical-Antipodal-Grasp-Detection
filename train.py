@@ -32,7 +32,7 @@ def train():
     model = GraspNet().to(device)
 
     #Adam optimizer
-    optimizer = torch.optim(model.parameters(), lr = 1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr = 1e-4)
     num_epochs = 20
     train_losses = []
     val_losses = []
