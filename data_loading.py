@@ -3,6 +3,27 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
+#defines a centered rectangular region, excluding a margin from each edge --
+#mirrors the same ROI insight from baseline.py's classical pipeline
+#(see get_roi_bounds there): objects in this dataset are always placed
+#centrally, so cropping out the margin before resizing gives the CNN much
+#more effective resolution on the object, instead of shrinking mostly
+#board/background down to 224x224 along with it.
+#Duplicated here (not imported from baseline.py) specifically to avoid
+#a circular import, since baseline.py already imports from this file.
+def get_roi_bounds(img_shape, margin_frac=0.15):
+    h, w = img_shape[:2]
+    x_margin = int(w * margin_frac)
+    y_margin = int(h * margin_frac)
+    return x_margin, w - x_margin, y_margin, h - y_margin
+
+#crops an image down to the central ROI, returns the crop plus the
+#(x_offset, y_offset) needed to map crop-local coordinates back to
+#the original full-image coordinates later
+def crop_to_roi(img, margin_frac=0.15):
+    x_min, x_max, y_min, y_max = get_roi_bounds(img.shape, margin_frac)
+    return img[y_min:y_max, x_min:x_max], x_min, y_min
+
 #loads RGB photo for given object ID
 def load_rgb(base_path, pcd_id):
    #loads in BGR

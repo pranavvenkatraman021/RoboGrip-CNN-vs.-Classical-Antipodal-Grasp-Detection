@@ -11,7 +11,7 @@ from model import GraspNet
 from grasp_dataset import GraspDataset
 from evaluate_baseline import is_correct_grasp
 from baseline import xywh_theta_to_corners
-from data_loading import load_rgb, load_depth, parse_grasp_rectangles
+from data_loading import load_rgb, load_depth, parse_grasp_rectangles, crop_to_roi
 
 IMG_SIZE = 224
 
@@ -25,7 +25,10 @@ def grasp_loss(pred, target):
     return xy_loss + 3.0 * wh_loss + angle_loss
 
 #computes REAL validation accuracy using the same IoU+angle metric used
-#for the baseline and final evaluation -- not a loss proxy, the actual metric
+#for the baseline and final evaluation -- not a loss proxy, the actual metric.
+#Uses the SAME ROI-crop preprocessing as GraspDataset and evaluate_cnn.py,
+#so checkpoint selection stays consistent with how the model was trained
+#and how it's finally evaluated.
 def compute_val_accuracy(model, val_dataset, device):
     model.eval()
     correct = 0
@@ -39,9 +42,12 @@ def compute_val_accuracy(model, val_dataset, device):
             if len(gt_rects) == 0:
                 continue
 
-            orig_h, orig_w = rgb.shape[:2]
-            rgb_r = cv2.resize(rgb, (IMG_SIZE, IMG_SIZE)).astype(np.float32) / 255.0
-            d = np.nan_to_num(depth.astype(np.float32), nan=0.0)
+            rgb_crop, x_off, y_off = crop_to_roi(rgb)
+            depth_crop, _, _ = crop_to_roi(depth)
+            crop_h, crop_w = rgb_crop.shape[:2]
+
+            rgb_r = cv2.resize(rgb_crop, (IMG_SIZE, IMG_SIZE)).astype(np.float32) / 255.0
+            d = np.nan_to_num(depth_crop.astype(np.float32), nan=0.0)
             d_r = cv2.resize(d, (IMG_SIZE, IMG_SIZE))
             d_r = d_r / (d_r.max() if d_r.max() > 0 else 1.0)
             combined = np.concatenate([rgb_r, d_r[:, :, np.newaxis]], axis=2).transpose(2, 0, 1)
@@ -49,11 +55,15 @@ def compute_val_accuracy(model, val_dataset, device):
 
             output = model(tensor).squeeze(0).cpu().numpy()
             x_n, y_n, w_n, h_n, s2t, c2t = output
-            sx, sy = IMG_SIZE / orig_w, IMG_SIZE / orig_h
-            x, y = (x_n * IMG_SIZE) / sx, (y_n * IMG_SIZE) / sy
-            w, h = (w_n * IMG_SIZE) / sx, (h_n * IMG_SIZE) / sy
+
+            #map normalized output directly back to crop-local pixels,
+            #then shift by the crop offset to get real image coordinates
+            x_pred = (x_n * crop_w) + x_off
+            y_pred = (y_n * crop_h) + y_off
+            w_pred = w_n * crop_w
+            h_pred = h_n * crop_h
             theta = np.degrees(0.5 * np.arctan2(s2t, c2t))
-            pred_corners = xywh_theta_to_corners(x, y, w, h, theta)
+            pred_corners = xywh_theta_to_corners(x_pred, y_pred, w_pred, h_pred, theta)
 
             total += 1
             if any(is_correct_grasp(pred_corners, gt) for gt in gt_rects):
