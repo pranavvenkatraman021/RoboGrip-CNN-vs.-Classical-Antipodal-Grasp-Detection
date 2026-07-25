@@ -37,6 +37,11 @@ def train():
     train_losses = []
     val_losses = []
 
+    #FIX: initialize these ONCE, before the loop, not inside it
+    best_val_loss = float("inf")
+    patience = 5
+    epochs_without_improvement = 0
+
     for epoch in range(num_epochs): 
         #training phase
         model.train()
@@ -45,14 +50,10 @@ def train():
         for images, targets in train_loader: 
             images, targets = images.to(device), targets.to(device)
 
-            #clear old gradients
             optimizer.zero_grad()
-            #forward pass
             predictions = model(images)
             loss = grasp_loss(predictions, targets)
-            #compute gradients
             loss.backward()
-            #update weights
             optimizer.step()
 
             running_train_loss += loss.item()
@@ -76,11 +77,23 @@ def train():
 
         print(f"Epoch {epoch+1}/{num_epochs} — train loss: {avg_train_loss:.4f} — val loss: {avg_val_loss:.4f}")
 
-    #save model weights to use later
-    torch.save(model.state_dict(), "grasp_model.pth")
-    print("saved trained model to grasp_model.pth")
+        #FIX: ONE combined check instead of two duplicated ones
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            epochs_without_improvement = 0
+            torch.save(model.state_dict(), "grasp_model_best.pth")
+            print(f"  → New best val loss, saved checkpoint")
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= patience:
+                print(f"Early stopping at epoch {epoch+1} (no improvement for {patience} epochs)")
+                break
 
-    #plot luss curves
+    #save final-epoch weights too, for reference/comparison against the best checkpoint
+    torch.save(model.state_dict(), "grasp_model_final.pth")
+    print("Saved final-epoch model to grasp_model_final.pth")
+    print(f"Best val loss achieved: {best_val_loss:.4f} (saved as grasp_model_best.pth)")
+
     plt.plot(train_losses, label="train loss")
     plt.plot(val_losses, label="val loss")
     plt.xlabel("epoch")
