@@ -11,6 +11,33 @@ from data_loading import load_rgb, load_depth, parse_grasp_rectangles, convert, 
 
 IMG_SIZE = 224
 
+#rotates rgb, depth, and the rectangle corners by the SAME transform,
+#so image and label stay consistent
+def rotate_image_and_rect(rgb, depth, rect_corners, angle_deg):
+    h, w = rgb.shape[:2]
+    center = (w / 2, h / 2)
+    M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+
+    rgb_rot = cv2.warpAffine(rgb, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+    depth_rot = cv2.warpAffine(depth, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+
+    ones = np.ones((rect_corners.shape[0], 1))
+    homogeneous = np.hstack([rect_corners, ones])
+    rotated_corners = (M @ homogeneous.T).T
+
+    return rgb_rot, depth_rot, rotated_corners
+
+#randomly jitters brightness/contrast -- RGB only, simulates lighting variation
+def jitter_brightness_contrast(rgb, brightness_range=0.2, contrast_range=0.2):
+    brightness_factor = 1.0 + random.uniform(-brightness_range, brightness_range)
+    contrast_factor = 1.0 + random.uniform(-contrast_range, contrast_range)
+
+    rgb = rgb.astype(np.float32)
+    mean = rgb.mean()
+    rgb = (rgb - mean) * contrast_factor + mean
+    rgb = rgb * brightness_factor
+    return np.clip(rgb, 0, 255).astype(np.uint8)
+
 #loads one (image, grasp label) pair 
 class GraspDataset(Dataset): 
     def __init__(self, entries, augment=False):
@@ -55,20 +82,26 @@ class GraspDataset(Dataset):
         gt_rects = parse_grasp_rectangles(f"{folder}/pcd{pcd_id}cpos.txt")
         chosen_rect = gt_rects[0].copy()
 
-        #NEW: crop to the central ROI FIRST, before anything else.
-        #Both rgb and depth use the SAME crop region (same image size,
-        #same margin_frac), so their offsets match and stay aligned.
+        #crop to the central ROI FIRST, before anything else.
         rgb, x_off, y_off = crop_to_roi(rgb)
         depth, _, _ = crop_to_roi(depth)
 
-        #shift the rectangle's coordinates to match the crop
         chosen_rect[:, 0] -= x_off
         chosen_rect[:, 1] -= y_off
 
         crop_h, crop_w = rgb.shape[:2]
 
-        #augmentation now operates on the CROPPED image -- crop_w is the
-        #correct flip reference now, not the original full image width
+        #random rotation, applied to image AND label together
+        if self.augment and random.random() < 0.5:
+            angle = random.uniform(-15, 15)
+            rgb, depth, chosen_rect = rotate_image_and_rect(rgb, depth, chosen_rect, angle)
+
+        #brightness/contrast jitter -- RGB only, doesn't touch the label
+        if self.augment and random.random() < 0.5:
+            rgb = jitter_brightness_contrast(rgb)
+
+        #flip -- FIXED: this block now appears only ONCE (a duplicate
+        #copy of this same block was removed here)
         if self.augment and random.random() < 0.5:
             rgb = np.fliplr(rgb).copy()
             depth = np.fliplr(depth).copy()
@@ -90,11 +123,8 @@ class GraspDataset(Dataset):
         combined = combined.transpose(2, 0, 1)
         image_tensor = torch.tensor(combined, dtype=torch.float32)
 
-
         x, y, w, h, theta_deg = convert(chosen_rect)
 
-        #CHANGED: scale relative to the CROP's size, not the original
-        #full image size -- since the crop is what actually got resized
         scale_x = IMG_SIZE / crop_w
         scale_y = IMG_SIZE / crop_h
         x = x * scale_x
