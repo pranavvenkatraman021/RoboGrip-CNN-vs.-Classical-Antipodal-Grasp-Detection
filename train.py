@@ -39,7 +39,7 @@ def train():
 
     #FIX: initialize these ONCE, before the loop, not inside it
     best_val_loss = float("inf")
-    patience = 10
+    patience = 1000
     epochs_without_improvement = 0
 
     for epoch in range(num_epochs): 
