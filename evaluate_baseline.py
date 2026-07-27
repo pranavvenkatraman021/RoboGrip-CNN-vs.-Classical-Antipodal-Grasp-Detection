@@ -33,36 +33,27 @@ def rectangle_iou(corners_a, corners_b):
 #(a grasp rectangle rotated 180 degrees is physically the same grasp)
 def angle_diff_deg(theta_a, theta_b):
     diff = abs(theta_a - theta_b) % 180
+    #result is always [0, 90]
     return min(diff, 180 - diff)
 
-#checks if a prediction counts as correct against ONE ground truth
-#rectangle, using the standard metric: IoU > 0.25 AND angle within 30°
-#
-#UNCHANGED ON PURPOSE -- this exact function is shared with the CNN
-#(train.py and evaluate_cnn.py both import it), so the two methods stay
-#graded by identical code. The B2 fix is applied upstream instead.
+#checks if a predction is correct: IoU > 0.25 and angle within 30 deg
 def is_correct_grasp(pred_corners, gt_corners, iou_thresh=0.25, angle_thresh=30):
     iou = rectangle_iou(pred_corners, gt_corners)
     if iou <= iou_thresh:
         return False
 
+    #convert gets theta using longer-edge convention
     _, _, _, _, theta_pred = convert(pred_corners)
     _, _, _, _, theta_gt = convert(gt_corners)
 
     diff = angle_diff_deg(theta_pred, theta_gt)
     return diff <= angle_thresh
 
-#runs just the PREDICTION part of the pipeline (no plotting) for one object.
-#
-#FIX: plate_thickness is now an explicit parameter and is explicitly passed
-#down to pair_to_grasp_rectangle. Previously predict_one called it with no
-#plate_thickness argument at all, so the function default silently decided the
-#value regardless of what had been tuned. Returning the diagnostics too, so a
-#sweep can see WHY a combination scored the way it did.
+#runs full prediction on one object 
 def predict_one(base_path, pcd_id, backgrounds,
-                min_dist=MIN_DIST, max_dist=MAX_DIST, plate_thickness=PLATE_THICKNESS,
-                width_margin=WIDTH_MARGIN, tie_break=TIE_BREAK, tie_tol=TIE_TOL,
-                mask_check=MASK_CHECK, return_details=False):
+                min_dist = MIN_DIST, max_dist = MAX_DIST, plate_thickness = PLATE_THICKNESS,
+                width_margin = WIDTH_MARGIN, tie_break = TIE_BREAK, tie_tol = TIE_TOL,
+                mask_check = MASK_CHECK, return_details = False):
     fail = (None, None) if return_details else None
 
     img_path = f"{base_path}/pcd{pcd_id}r.png"
@@ -70,73 +61,82 @@ def predict_one(base_path, pcd_id, backgrounds,
         print(f"MISSING FILE: {img_path}")
         return fail
 
+    #passthrough when set
     min_dist = enforce_min_dist(min_dist, plate_thickness)
 
     img = load_rgb(base_path, pcd_id)
 
+    #binary object mask
     mask = create_mask(img, backgrounds)
+    #outline of object 
     contour = get_largest_contour(mask)
 
+    #needs atleast 10 points to estimate
     if contour is None or len(contour) < 10:
         return fail
 
+    #estimate surface normal at each point
     normals = estimate_normals(contour)
+    #only pass is mask_check is on
     best_pair, score = find_best_antipodal_pair(
         contour, normals, min_dist, max_dist,
-        tie_break=tie_break, tie_tol=tie_tol,
-        mask=mask if mask_check else None)
+        tie_break = tie_break, tie_tol = tie_tol,
+        mask = mask if mask_check else None)
 
     if best_pair is None:
         return fail
 
+    #convert contact points into rectangles 
     point_a, point_b = best_pair
     x, y, w, h, theta = pair_to_grasp_rectangle(point_a, point_b, plate_thickness,
                                                 width_margin=width_margin)
+
+    #convert back for IoU / angle metric
     corners = xywh_theta_to_corners(x, y, w, h, theta)
 
     if return_details:
         return corners, {"score": score, "width": w, "theta": theta}
     return corners
 
-
-#runs the baseline across one split and computes accuracy.
-#
-#split_key defaults to "test" but MUST be set to "val" while tuning --
-#the test set is touched exactly once, at the very end.
-def evaluate_baseline(backgrounds_dir=BACKGROUNDS_DIR, split_path="dataset_split.json",
-                      min_dist=MIN_DIST, max_dist=MAX_DIST, plate_thickness=PLATE_THICKNESS,
-                      width_margin=WIDTH_MARGIN, tie_break=TIE_BREAK,
-                      split_key="test", verbose=True):
+#runs predict_one on every image and reports accuracy
+def evaluate_baseline(backgrounds_dir = BACKGROUNDS_DIR, split_path = "dataset_split.json",
+                      min_dist  = MIN_DIST, max_dist = MAX_DIST, plate_thickness = PLATE_THICKNESS,
+                      width_margin = WIDTH_MARGIN, tie_break = TIE_BREAK,
+                      split_key = "test", verbose = True):
     with open(split_path, "r") as f:
         split = json.load(f)
 
     entries = split[split_key]
     backgrounds = load_backgrounds(backgrounds_dir)
 
+    #apply min_dist enforcement once before 
     effective_min = enforce_min_dist(min_dist, plate_thickness, warn=verbose)
 
     total = 0
     correct = 0
     skipped = 0
-    scores = []
+    scores = [] #antipodal scores
     widths = []
 
     for entry in entries:
         pcd_id = entry["id"]
         folder = entry["folder"]
 
+        #runs full 
         pred_corners, details = predict_one(
             folder, pcd_id, backgrounds,
-            min_dist=effective_min, max_dist=max_dist, plate_thickness=plate_thickness,
-            width_margin=width_margin, tie_break=tie_break, return_details=True,
+            min_dist = effective_min, max_dist = max_dist, plate_thickness = plate_thickness,
+            width_margin = width_margin, tie_break = tie_break, return_details = True,
         )
 
+        #no prediction produced
         if pred_corners is None:
             skipped += 1
             continue
 
         gt_rects = parse_grasp_rectangles(f"{folder}/pcd{pcd_id}cpos.txt")
 
+        #no usable labels
         if len(gt_rects) == 0:
             skipped += 1
             continue
@@ -145,8 +145,8 @@ def evaluate_baseline(backgrounds_dir=BACKGROUNDS_DIR, split_path="dataset_split
         scores.append(details["score"])
         widths.append(details["width"])
 
+        #if it matches any labeled labelled ground-truth grasp
         matched = any(is_correct_grasp(pred_corners, gt) for gt in gt_rects)
-
         if matched:
             correct += 1
 
@@ -168,10 +168,12 @@ def evaluate_baseline(backgrounds_dir=BACKGROUNDS_DIR, split_path="dataset_split
         if scores:
             scores = np.array(scores)
             widths = np.array(widths)
-            #diagnostics for findings B1 and B2
+            #diagnostics post-fix
             print(f"\n  antipodal score  mean {scores.mean():.2f} / 2.00, "
                   f"median {np.median(scores):.2f}, min {scores.min():.2f}")
             print(f"  weak grasps (score < 1.0): {(scores < 1.0).mean():.1%} of predictions")
+
+            #diagnostics for predicted width (cap)
             print(f"  predicted width  mean {widths.mean():.1f} px, "
                   f"median {np.median(widths):.1f}, min {widths.min():.1f}, max {widths.max():.1f}")
             n_flip = int((widths < plate_thickness).sum())
@@ -181,10 +183,7 @@ def evaluate_baseline(backgrounds_dir=BACKGROUNDS_DIR, split_path="dataset_split
 
     return accuracy
 
-#diagnostic helper for inspecting ONE image in detail -- prints IoU and
-#correctness against every ground truth rectangle, then digs deeper
-#into whichever one had the BEST IoU (the "closest match"), since
-#that's the one most likely to reveal WHY a near-miss failed
+#detailed grade for one image
 def analyze_single_prediction(base_path, pcd_id, pred_corners):
     if pred_corners is None:
         print(f"No prediction produced for pcd{pcd_id}.")
@@ -214,6 +213,7 @@ def analyze_single_prediction(base_path, pcd_id, pred_corners):
         print("\nNo ground truth rectangles found to compare against.")
         return
 
+    #closest-matching grount-truth rectangle
     gt_best = gt_rects[best_gt_idx]
 
     x_pred, y_pred, w_pred, h_pred, theta_pred = convert(pred_corners)
@@ -226,7 +226,5 @@ def analyze_single_prediction(base_path, pcd_id, pred_corners):
     print(f"Angle difference: {diff:.1f}°")
 
 if __name__ == "__main__":
-    #  python evaluate_baseline.py          -> test split (final number, run once)
-    #  python evaluate_baseline.py val      -> validation split (safe to re-run)
     split_key = sys.argv[1] if len(sys.argv) > 1 else "test"
     evaluate_baseline(split_key=split_key)

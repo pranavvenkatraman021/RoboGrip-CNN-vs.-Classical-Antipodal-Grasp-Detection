@@ -24,6 +24,7 @@ def load_backgrounds(backgrounds_dir):
 def find_best_matching_background(img, backgrounds, border=20):
     h, w = img.shape[:2]
 
+    #building a boolean mask that is true only on the border
     border_mask = np.zeros((h, w), dtype=bool)
     border_mask[:border, :] = True
     border_mask[-border:, :] = True
@@ -37,19 +38,19 @@ def find_best_matching_background(img, backgrounds, border=20):
         if bg.shape != img.shape:
             continue
 
+        #per-pixel absolute difference across color channels
         diff = np.abs(img.astype(int) - bg.astype(int))
         border_diff = diff[border_mask].mean()
 
+        #smallest border difference
         if border_diff < best_score:
             best_score = border_diff
             best_bg = bg
 
     return best_bg
 
-#defines a centered rectangular region, excluding a margin from each edge --
-#since objects are always placed centrally in this dataset, the board's
-#own outer edge (which lives in that margin) never needs to be considered
-def get_roi_bounds(img_shape, margin_frac=0.15):
+#returns pixel coords of central (region of interest, ROI)
+def get_roi_bounds(img_shape, margin_frac = 0.15):
     h, w = img_shape[:2]
     x_margin = int(w * margin_frac)
     y_margin = int(h * margin_frac)
@@ -57,22 +58,25 @@ def get_roi_bounds(img_shape, margin_frac=0.15):
 
 #RGB image into a mask (white is object, black is background)
 def create_mask(img, backgrounds, margin_frac=0.15):
+    #find closest background photo
     best_bg = find_best_matching_background(img, backgrounds)
     if best_bg is None:
         raise ValueError("No matching background found — check image sizes match.")
 
-    diff = np.abs(img.astype(int) - best_bg.astype(int)).sum(axis=2)
+    #collapse into single grayscale difference map 
+    diff = np.abs(img.astype(int) - best_bg.astype(int)).sum(axis = 2)
     diff = diff.astype(np.uint8)
 
+    #use OTSU to find the treshold value that maximizes 
     _, mask = cv2.threshold(diff, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     kernel = np.ones((5, 5), np.uint8)
+    #morphological opening removes tiny white specks
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    #morphological closing finds small holes 
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    #zero out everything outside a central region, so the board's own
-    #outer edge (a common false-positive "biggest contour") can never
-    #be picked up -- objects are always placed centrally in this dataset
+    #create blanck canvas and only copy central ROI region 
     x_min, x_max, y_min, y_max = get_roi_bounds(img.shape, margin_frac)
     roi_mask = np.zeros_like(mask)
     roi_mask[y_min:y_max, x_min:x_max] = mask[y_min:y_max, x_min:x_max]
@@ -86,37 +90,38 @@ def get_largest_contour(mask):
     if len(contours) == 0:
         return None
 
-    largest = max(contours, key=cv2.contourArea)
+    #taking max to get the object
+    largest = max(contours, key = cv2.contourArea)
+    #get a clean (N, 2) array of [x, y] points 
     return largest.squeeze()
 
-#estimates surface normal at every point along the contour
-#
-#FIX (finding B1): perpendicular-to-tangent gives *a* normal, but not
-#necessarily an OUTWARD one -- the sign depended entirely on whichever winding
-#direction cv2.findContours happened to return. The antipodal score below is
-#only meaningful if every normal points outward, so we now force that
-#explicitly by checking each normal against the contour centroid. The
-#convention can no longer silently invert.
+#estimates surface normal at every point on the contour 
 def estimate_normals(contour, step=8):
     n_points = len(contour)
+    #centroid is avg position of all contour points (center of object)
     centroid = contour.astype(float).mean(axis=0)
     normals = []
 
     for i in range(n_points):
+        #wrap around at the ends to get valid tangent estimate
         p_before = contour[(i - step) % n_points].astype(float)
         p_after = contour[(i + step) % n_points].astype(float)
 
+        #tangent is direction along contour at point i
         tangent = p_after - p_before
         tangent_len = np.linalg.norm(tangent)
 
+        #is the step-8 neighbors are the same point 
         if tangent_len == 0:
             normals.append(np.array([0.0, -1.0]))
             continue
 
+        #normalize unit length
         tangent = tangent / tangent_len
+        #perpendiculat to tangent (could point in or out)
         normal = np.array([-tangent[1], tangent[0]])
 
-        #force OUTWARD: the normal must point away from the object's centre
+        #force outwards using dot product with vector from centroid to point
         if np.dot(normal, contour[i].astype(float) - centroid) < 0:
             normal = -normal
 
@@ -124,47 +129,15 @@ def estimate_normals(contour, step=8):
 
     return normals
 
-#searches pairs of contour points to find best antipodal pair
-#
-#FIX (finding B1): the score had its sign inverted. With OUTWARD normals and a
-#genuine antipodal pair, direction_ab points from A into the object and out the
-#far side -- so normal_a opposes it (dot ~ -1) and normal_b aligns with it
-#(dot(normal_b, -direction_ab) ~ -1). The old score summed those to -2 and then
-#MAXIMISED, i.e. it searched for the least antipodal pair available. Negating
-#both terms makes a perfect antipodal pair score +2.0, which is what we want to
-#maximise. Verified on synthetic shapes: the corrected search picks the minor
-#axis of an ellipse and the short side of a rectangle, while the old one
-#collapsed to pairs of nearby points roughly min_dist apart on the same edge.
-def find_best_antipodal_pair(contour, normals, min_dist, max_dist, sample_step=4,
-                             tie_break=TIE_BREAK, tie_tol=TIE_TOL, mask=None):
-    """
-    FIX (finding B4): once B1 made the score correct, near-perfect scores became
-    common -- on an elongated object every pair of points on the two parallel
-    edges scores ~2.0. The old `if score > best_score` then kept whichever one
-    contour traversal happened to reach first, so the grasp's position ALONG the
-    object was arbitrary. That produces the exact failure signature we measured:
-    the angle is right most of the time, but IoU fails because the rectangle is
-    in the wrong place.
+#finds best pair of contact points for gripper to close on 
+def find_best_antipodal_pair(contour, normals, min_dist, max_dist, sample_step = 4,
+                             tie_break = TIE_BREAK, tie_tol = TIE_TOL, mask = None):
 
-    So: collect every pair within tie_tol of the best score, then choose among
-    them on a physical criterion.
-
-        tie_break="first"     old behaviour (contour order) -- for comparison
-        tie_break="centroid"  midpoint nearest the object centroid, a rough
-                              stand-in for centre of mass, which is roughly
-                              where a person places a grasp
-        tie_break="narrow"    smallest opening -- grippers close more reliably
-                              on a narrow feature
-        tie_break="wide"      largest opening
-
-    If `mask` is supplied, pairs whose midpoint falls outside the object are
-    rejected. That matters on concave shapes: the chord between two contour
-    points of a mug can cross the hole, which is not a grasp at all.
-    """
     n_points = len(contour)
     centroid = contour.astype(float).mean(axis=0)
 
     candidates = []
+    #sample every 4th for runtime 
     indices = range(0, n_points, sample_step)
 
     for i in indices:
@@ -176,9 +149,12 @@ def find_best_antipodal_pair(contour, normals, min_dist, max_dist, sample_step=4
             point_b = contour[j].astype(float)
 
             dist = np.linalg.norm(point_b - point_a)
+
+            #skip pairs that are too close or too far
             if dist < min_dist or dist > max_dist:
                 continue
 
+            #reject pairs with midpoint outside of object 
             if mask is not None:
                 mid = ((point_a + point_b) / 2).astype(int)
                 if not (0 <= mid[1] < mask.shape[0] and 0 <= mid[0] < mask.shape[1]):
@@ -186,36 +162,46 @@ def find_best_antipodal_pair(contour, normals, min_dist, max_dist, sample_step=4
                 if mask[mid[1], mid[0]] == 0:
                     continue
 
+            #unit vector from A toward B
             direction_ab = (point_b - point_a) / dist
 
-            #antipodal: each OUTWARD normal opposes the closing direction.
-            #a perfect pair scores +2.0
+            #antipodal score, how well they oppose
+            #normal of a vs A to B
             score_a = -np.dot(normals[i], direction_ab)
+            #normal of b vs B to A
             score_b = -np.dot(normals[j], -direction_ab)
+
+            #store score and opening width
             candidates.append((score_a + score_b, point_a, point_b, dist))
 
     if not candidates:
         return None, -np.inf
 
+    #find best score
     top = max(c[0] for c in candidates)
+    #collect every pair within tie_tol of it 
     finalists = [c for c in candidates if c[0] >= top - tie_tol]
 
+    #choose amont tied candidates
     if tie_break == "centroid":
-        pick = min(finalists,
-                   key=lambda c: np.linalg.norm((c[1] + c[2]) / 2 - centroid))
+        #midpoint nearest the object
+        pick = min(finalists, key=lambda c: np.linalg.norm((c[1] + c[2]) / 2 - centroid))
     elif tie_break == "narrow":
+        #smallest opening
         pick = min(finalists, key=lambda c: c[3])
     elif tie_break == "wide":
+        #largest opening
         pick = max(finalists, key=lambda c: c[3])
-    else:                                   # "first" -- original behaviour
+    else:            
+        #first pair that contour traversal reached 
         pick = finalists[0]
 
     return (pick[1], pick[2]), float(pick[0])
 
-#counts how many pairs are effectively tied at the top score. If this is large,
-#the tie-break above is doing more work than the antipodal score itself.
+#counts how many pairs score within tie_tol of the best score
+#finding importance of tie-break criteria
 def count_near_optimal(contour, normals, min_dist, max_dist, sample_step=4,
-                       tie_tol=TIE_TOL):
+                       tie_tol = TIE_TOL):
     scores = []
     n_points = len(contour)
     indices = range(0, n_points, sample_step)
@@ -228,42 +214,38 @@ def count_near_optimal(contour, normals, min_dist, max_dist, sample_step=4,
             if d < min_dist or d > max_dist:
                 continue
             u = (b - a) / d
+            #same score formula 
             scores.append(-np.dot(normals[i], u) - np.dot(normals[j], -u))
     if not scores:
         return 0, 0
     scores = np.array(scores)
+    #count how many are within tie_tol
     return int((scores >= scores.max() - tie_tol).sum()), len(scores)
 
-#converts an antipodal point pair into a grasp rectangle (x, y, w, h, theta)
-#
-#width_margin (finding: predicted rectangles measured ~15% smaller than ground
-#truth in BOTH dimensions). The chord between the two contact points is the
-#OBJECT's width there; a gripper's labelled opening is wider than the object it
-#closes on, so a margin factor is physically motivated rather than a fudge.
-#Set it from the measured ratio of GT width to predicted width, and check the
-#result against measure_gt_stats.py rather than just maximising a score.
-def pair_to_grasp_rectangle(point_a, point_b, plate_thickness=PLATE_THICKNESS,
-                            width_margin=WIDTH_MARGIN,
-                            plate_cap_ratio=PLATE_CAP_RATIO):
+#converts two contact points into (x, y, w, h theta) grasp rectangle
+def pair_to_grasp_rectangle(point_a, point_b, plate_thickness = PLATE_THICKNESS,
+                            width_margin = WIDTH_MARGIN,
+                            plate_cap_ratio = PLATE_CAP_RATIO):
     center = (point_a + point_b) / 2
     w = np.linalg.norm(point_b - point_a) * width_margin
     h = plate_thickness
 
-    #B2, better version: keep the plate shorter than the opening so convert()'s
-    #longer-edge rule always lands on the closing direction. Only binds when the
-    #object is genuinely narrower than the plate.
+    #keep h below w so the longer edge is always closing direction
     if plate_cap_ratio is not None:
         h = min(h, w * plate_cap_ratio)
 
+    #angle of A to B vector in degrees
     edge = point_b - point_a
     theta = np.degrees(np.arctan2(edge[1], edge[0]))
 
     return center[0], center[1], w, h, theta
 
-#converts (x, y, w, h, theta) back into 4 corner points, for plotting
+#converts (x, y, w, h, theta) back into 4 corner points for plotting
 def xywh_theta_to_corners(x, y, w, h, theta_deg):
     theta = np.radians(theta_deg)
+    #vector length w/2 along closing direction
     dx_w, dy_w = np.cos(theta) * (w / 2), np.sin(theta) * (w / 2)
+    #vector of length h/2 perp to the closing direction
     dx_h, dy_h = -np.sin(theta) * (h / 2), np.cos(theta) * (h / 2)
 
     corners = np.array([
@@ -274,37 +256,30 @@ def xywh_theta_to_corners(x, y, w, h, theta_deg):
     ])
     return corners
 
-#FIX (finding B2): is_correct_grasp runs BOTH the prediction and the ground
-#truth back through convert(), which measures theta from whichever edge is
-#LONGER. If a predicted gripper opening is narrower than the plate thickness,
-#the longer edge is the plate, not the closing direction, and the reported
-#theta jumps 90 degrees -- an automatic failure of the 30-degree angle check no
-#matter how good the position is. Clamping min_dist to plate_thickness closes
-#that window. Doing it here, rather than changing convert() or
-#is_correct_grasp, keeps the shared metric code byte-identical for the CNN.
-def enforce_min_dist(min_dist, plate_thickness, warn=False,
-                     plate_cap_ratio=PLATE_CAP_RATIO):
-    #with the plate capped below the opening the flip cannot happen, so there is
-    #no reason to forbid narrow grasps -- a skipped image is a guaranteed failure
+#passes min_dist through unchanged when plate_cap_ratio is set 
+def enforce_min_dist(min_dist, plate_thickness, warn = False,
+                     plate_cap_ratio = PLATE_CAP_RATIO):
+    #no need to restrict min_dist
     if plate_cap_ratio is not None:
         return min_dist
     if min_dist < plate_thickness:
         if warn:
-            print(f"[B2] min_dist={min_dist} < plate_thickness={plate_thickness}; "
+            print(f"min_dist={min_dist} < plate_thickness={plate_thickness}; "
                   f"clamping min_dist to {plate_thickness} to avoid the 90-degree theta flip.")
         return plate_thickness
     return min_dist
 
 #runs the full baseline pipeline on one object and visualizes the result:
-#ground truth (green) vs. the baseline's predicted grasp (red)
+#ground truth (green) vs. the baseline's predicted grasp (red), yellow dots = two points
 def run_baseline(base_path, pcd_id, backgrounds_dir,
-                 min_dist=MIN_DIST, max_dist=MAX_DIST, plate_thickness=PLATE_THICKNESS):
+                 min_dist = MIN_DIST, max_dist = MAX_DIST, plate_thickness = PLATE_THICKNESS):
     img_path = f"{base_path}/pcd{pcd_id}r.png"
     if not os.path.exists(img_path):
         print(f"MISSING FILE: {img_path} — skipping this image.")
         return
 
-    min_dist = enforce_min_dist(min_dist, plate_thickness, warn=True)
+    #passthrough when plate_cap ratio is set
+    min_dist = enforce_min_dist(min_dist, plate_thickness, warn = True)
 
     img = load_rgb(base_path, pcd_id)
 
@@ -317,11 +292,16 @@ def run_baseline(base_path, pcd_id, backgrounds_dir,
         return
 
     normals = estimate_normals(contour)
+
+    #pass the mask only if mask check is on 
     best_pair, score = find_best_antipodal_pair(contour, normals, min_dist, max_dist,
-                                                mask=mask if MASK_CHECK else None)
+                                                mask = mask if MASK_CHECK else None)
+
+    #count how many pairs are tied
     n_tied, n_valid = count_near_optimal(contour, normals, min_dist, max_dist)
 
     if best_pair is None:
+        #explain why no pair was found (easier to diagnose)
         n_free, _ = count_near_optimal(contour, normals, min_dist, max_dist)
         print(f"pcd{pcd_id}: no valid antipodal pair found.")
         print(f"  min_dist={min_dist} (clamped from config), max_dist={max_dist}, "
@@ -346,24 +326,23 @@ def run_baseline(base_path, pcd_id, backgrounds_dir,
     fig, ax = plt.subplots(1, figsize=(6, 6))
     ax.imshow(img)
 
+    #draw ground-truth grasps in green 
     for rect in gt_rects:
         closed = np.vstack([rect, rect[0]])
         ax.plot(closed[:, 0], closed[:, 1], 'g-', linewidth=1.5,
                 label="ground truth" if rect is gt_rects[0] else None)
 
+    #draw our prediction in red
     closed_pred = np.vstack([predicted_corners, predicted_corners[0]])
     ax.plot(closed_pred[:, 0], closed_pred[:, 1], 'r-', linewidth=2, label="baseline prediction")
 
-    #draw the two contact points, so it's obvious where the "fingers" landed
+    #draw the two contact points
     ax.plot([point_a[0], point_b[0]], [point_a[1], point_b[1]], 'yo', markersize=5)
 
     ax.set_title(f"pcd{pcd_id} — score {score:.2f}/2.00, w {w:.1f}px, {n_tied} tied")
     ax.legend()
     plt.show()
 
-#lets you inspect any single image: shows the plot AND prints the
-#actual metric result against every ground truth rectangle, plus a
-#detailed diagnostic on the closest-matching one
 if __name__ == "__main__":
     from evaluate_baseline import predict_one, analyze_single_prediction
 
@@ -373,7 +352,7 @@ if __name__ == "__main__":
 
     run_baseline(base_path, pcd_id, BACKGROUNDS_DIR)
 
+    #print the IoU and angle numbers against every ground-truth rectangle
     backgrounds = load_backgrounds(BACKGROUNDS_DIR)
     pred_corners = predict_one(base_path, pcd_id, backgrounds)
-
     analyze_single_prediction(base_path, pcd_id, pred_corners)
