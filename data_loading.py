@@ -4,23 +4,14 @@ import cv2
 import matplotlib.pyplot as plt
 
 
-#defines a centered rectangular region, excluding a margin from each edge --
-#mirrors the same ROI insight from baseline.py's classical pipeline
-#(see get_roi_bounds there): objects in this dataset are always placed
-#centrally, so cropping out the margin before resizing gives the CNN much
-#more effective resolution on the object, instead of shrinking mostly
-#board/background down to 224x224 along with it.
-#Duplicated here (not imported from baseline.py) specifically to avoid
-#a circular import, since baseline.py already imports from this file.
+#replica on the one from baseline.py to avoid circular import 
 def get_roi_bounds(img_shape, margin_frac=0.15):
     h, w = img_shape[:2]
     x_margin = int(w * margin_frac)
     y_margin = int(h * margin_frac)
     return x_margin, w - x_margin, y_margin, h - y_margin
 
-#crops an image down to the central ROI, returns the crop plus the
-#(x_offset, y_offset) needed to map crop-local coordinates back to
-#the original full-image coordinates later
+#crops an image down to the central ROI
 def crop_to_roi(img, margin_frac=0.15):
     x_min, x_max, y_min, y_max = get_roi_bounds(img.shape, margin_frac)
     return img[y_min:y_max, x_min:x_max], x_min, y_min
@@ -72,21 +63,9 @@ def parse_grasp_rectangles(filepath):
        rectangles.append(np.array(group))
 
    return rectangles
-"""
-#convert rectangle to (x, y, w, h, theta)
-def convert(rectangle):
-   center = rectangle.mean(axis = 0)
-   #vector
-   edge = rectangle[1] - rectangle[0]
 
-   w = np.linalg.norm(edge)
-   h = np.linalg.norm(rectangle[2] - rectangle[1])
-  
-   theta = np.degrees(np.arctan2(edge[1], edge[0]))
-   return center[0], center[1], w, h, theta
-
-   """
-
+#converts corners into (x, y, w, h, theta)
+#shared between the baseline and CNN
 def convert(corners):
     center = corners.mean(axis=0)
 
@@ -96,11 +75,13 @@ def convert(corners):
     len1 = np.linalg.norm(edge1)
     len2 = np.linalg.norm(edge2)
 
+    #assign w to longer edge and h to shorter one 
     if len1 >= len2:
         w, h, main_edge = len1, len2, edge1
     else:
         w, h, main_edge = len2, len1, edge2
 
+    #gripper direction
     theta = np.degrees(np.arctan2(main_edge[1], main_edge[0]))
     return center[0], center[1], w, h, theta
 
