@@ -19,7 +19,7 @@ IMG_SIZE = 224
 
 #rotates rgb, depth, and the rectangle corners by the SAME transform,
 #so image and label stay consistent
-def rotate_image_and_rect(rgb, depth, rect_corners, angle_deg):
+def rotate_image_and_rects(rgb, depth, rects, angle_deg):
     h, w = rgb.shape[:2]
     center = (w / 2, h / 2)
     M = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
@@ -29,12 +29,14 @@ def rotate_image_and_rect(rgb, depth, rect_corners, angle_deg):
     depth_rot = cv2.warpAffine(depth, M, (w, h), borderMode=cv2.BORDER_REFLECT)
 
 
-    ones = np.ones((rect_corners.shape[0], 1))
-    homogeneous = np.hstack([rect_corners, ones])
-    rotated_corners = (M @ homogeneous.T).T
+    flat_points = rects.reshape(-1, 2)
+    ones = np.ones((flat_points.shape[0], 1))
+    homogeneous = np.hstack([flat_points, ones])
+    rotated_points = (M @ homogeneous.T).T
+    rotated_rects = rotated_points.reshape(rects.shape)
 
 
-    return rgb_rot, depth_rot, rotated_corners
+    return rgb_rot, depth_rot, rotated_rects
 
 
 #randomly jitters brightness/contrast -- RGB only, simulates lighting variation
@@ -103,7 +105,7 @@ class GraspDataset(Dataset):
 
 
         gt_rects = parse_grasp_rectangles(f"{folder}/pcd{pcd_id}cpos.txt")
-        chosen_rect = gt_rects[0].copy()
+        all_rects = np.stack(gt_rects).astype(np.float32)
 
 
         #crop to the central ROI FIRST, before anything else.
@@ -111,8 +113,8 @@ class GraspDataset(Dataset):
         depth, _, _ = crop_to_roi(depth)
 
 
-        chosen_rect[:, 0] -= x_off
-        chosen_rect[:, 1] -= y_off
+        all_rects[:, :, 0] -= x_off
+        all_rects[:, :, 1] -= y_off
 
 
         crop_h, crop_w = rgb.shape[:2]
@@ -121,7 +123,9 @@ class GraspDataset(Dataset):
         #random rotation, applied to image AND label together
         if self.augment and random.random() < 0.5:
             angle = random.uniform(-15, 15)
-            rgb, depth, chosen_rect = rotate_image_and_rect(rgb, depth, chosen_rect, angle)
+            rgb, depth, all_rects = rotate_image_and_rects(
+                rgb, depth, all_rects, angle
+            )
 
 
         #brightness/contrast jitter -- RGB only, doesn't touch the label
@@ -134,8 +138,8 @@ class GraspDataset(Dataset):
         if self.augment and random.random() < 0.5:
             rgb = np.fliplr(rgb).copy()
             depth = np.fliplr(depth).copy()
-            chosen_rect = chosen_rect.copy()
-            chosen_rect[:, 0] = crop_w - chosen_rect[:, 0]
+            all_rects = all_rects.copy()
+            all_rects[:, :, 0] = crop_w - all_rects[:, :, 0]
 
 
         #resize without changing the visible grasp angle
@@ -164,26 +168,26 @@ class GraspDataset(Dataset):
         image_tensor = torch.tensor(combined, dtype=torch.float32)
 
 
-        #moves the label through the same letterbox transform
-        chosen_rect = points_to_letterbox(chosen_rect, scale, pad_x, pad_y)
-        x, y, w, h, theta_deg = convert(chosen_rect)
+        #moves every label through the same letterbox transform
+        targets = []
+        for rect in all_rects:
+            rect = points_to_letterbox(rect, scale, pad_x, pad_y)
+            x, y, w, h, theta_deg = convert(rect)
 
 
-        x_norm = x / IMG_SIZE
-        y_norm = y / IMG_SIZE
-        w_norm = w / IMG_SIZE
-        h_norm = h / IMG_SIZE
+            theta_rad = np.radians(theta_deg)
+            targets.append([
+                x / IMG_SIZE,
+                y / IMG_SIZE,
+                w / IMG_SIZE,
+                h / IMG_SIZE,
+                np.sin(2 * theta_rad),
+                np.cos(2 * theta_rad)
+            ])
 
 
-        theta_rad = np.radians(theta_deg)
-        sin2t = np.sin(2 * theta_rad)
-        cos2t = np.cos(2 * theta_rad)
-
-
-        target = torch.tensor([x_norm, y_norm, w_norm, h_norm, sin2t, cos2t], dtype=torch.float32)
-
-
-        return image_tensor, target
+        target_tensor = torch.tensor(targets, dtype=torch.float32)
+        return image_tensor, target_tensor
 
 
 if __name__ == "__main__":
@@ -195,6 +199,6 @@ if __name__ == "__main__":
     print(f"Training set size: {len(dataset)}")
 
 
-    image, target = dataset[0]
+    image, targets = dataset[0]
     print("Image tensor shape:", image.shape)   
-    print("Target:", target)
+    print("Target tensor shape:", targets.shape)

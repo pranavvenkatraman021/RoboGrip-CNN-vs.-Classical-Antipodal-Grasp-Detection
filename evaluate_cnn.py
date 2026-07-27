@@ -81,7 +81,10 @@ def output_to_corners(output, scale, pad_x, pad_y, x_off, y_off):
 
 
 #runs CNN across test split and computes accuracy
-def evaluate_cnn(split_path="dataset_split.json", weights_path="grasp_model_best.pth"):
+def evaluate_cnn(
+    split_path="dataset_split.json",
+    weights_path="grasp_model_multigt_best.pth"
+):
     model = load_trained_model(weights_path)
 
 

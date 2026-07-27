@@ -1,7 +1,8 @@
 #imports 
 import json
+import random
+import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
@@ -18,14 +19,38 @@ from data_loading import load_rgb, load_depth, parse_grasp_rectangles
 IMG_SIZE = 224
 
 
-#loss function: MSE on x,y + weighted MSE on w,h + MSE on sin/cos angle terms
-#w,h is weighted higher since it's what actually drives IoU/correctness --
-#x,y naturally has larger values and was dominating the total loss otherwise
-def grasp_loss(pred, target):
-    xy_loss = nn.functional.mse_loss(pred[:, :2], target[:, :2])
-    wh_loss = nn.functional.mse_loss(pred[:, 2:4], target[:, 2:4])
-    angle_loss = nn.functional.mse_loss(pred[:, 4:], target[:, 4:])
-    return xy_loss + 3.0 * wh_loss + angle_loss
+#pads each image's different number of valid grasps
+def grasp_collate_fn(batch):
+    images, target_lists = zip(*batch)
+    max_targets = max(targets.shape[0] for targets in target_lists)
+
+
+    padded_targets = torch.zeros(len(batch), max_targets, 6)
+    target_mask = torch.zeros(len(batch), max_targets, dtype=torch.bool)
+
+
+    for i, targets in enumerate(target_lists):
+        count = targets.shape[0]
+        padded_targets[i, :count] = targets
+        target_mask[i, :count] = True
+
+
+    return torch.stack(images), padded_targets, target_mask
+
+
+#uses the closest valid grasp instead of only the first annotation
+def grasp_loss(pred, targets, target_mask):
+    expanded_pred = pred.unsqueeze(1)
+
+
+    xy_loss = ((expanded_pred[:, :, :2] - targets[:, :, :2]) ** 2).mean(dim=2)
+    wh_loss = ((expanded_pred[:, :, 2:4] - targets[:, :, 2:4]) ** 2).mean(dim=2)
+    angle_loss = ((expanded_pred[:, :, 4:] - targets[:, :, 4:]) ** 2).mean(dim=2)
+
+
+    all_losses = xy_loss + 3.0 * wh_loss + angle_loss
+    all_losses = all_losses.masked_fill(~target_mask, float("inf"))
+    return all_losses.min(dim=1).values.mean()
 
 
 #computes REAL validation accuracy using the same IoU+angle metric used
@@ -67,6 +92,15 @@ def compute_val_accuracy(model, val_dataset, device):
 
 
 def train(): 
+    seed = 42
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -78,8 +112,18 @@ def train():
     val_dataset = GraspDataset(split["val"], augment=False)
 
 
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=16,
+        shuffle=True,
+        collate_fn=grasp_collate_fn
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=16,
+        shuffle=False,
+        collate_fn=grasp_collate_fn
+    )
 
 
     model = GraspNet().to(device)
@@ -100,11 +144,13 @@ def train():
         running_train_loss = 0.0
 
 
-        for images, targets in train_loader: 
-            images, targets = images.to(device), targets.to(device)
+        for images, targets, target_mask in train_loader:
+            images = images.to(device)
+            targets = targets.to(device)
+            target_mask = target_mask.to(device)
             optimizer.zero_grad()
             predictions = model(images)
-            loss = grasp_loss(predictions, targets)
+            loss = grasp_loss(predictions, targets, target_mask)
             loss.backward()
             optimizer.step()
             running_train_loss += loss.item()
@@ -117,10 +163,12 @@ def train():
         model.eval()
         running_val_loss = 0.0
         with torch.no_grad(): 
-            for images, targets in val_loader: 
-                images, targets = images.to(device), targets.to(device)
+            for images, targets, target_mask in val_loader:
+                images = images.to(device)
+                targets = targets.to(device)
+                target_mask = target_mask.to(device)
                 predictions = model(images)
-                loss = grasp_loss(predictions, targets)
+                loss = grasp_loss(predictions, targets, target_mask)
                 running_val_loss += loss.item()
         avg_val_loss = running_val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
@@ -137,8 +185,8 @@ def train():
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             epochs_without_improvement = 0
-            torch.save(model.state_dict(), "grasp_model_best.pth")
-            print(f"  → New best val accuracy ({val_accuracy:.2%}), saved checkpoint")
+            torch.save(model.state_dict(), "grasp_model_multigt_best.pth")
+            print(f"  → New best val accuracy ({val_accuracy:.2%}), saved multigt checkpoint")
         else:
             epochs_without_improvement += 1
             if epochs_without_improvement >= patience:
@@ -146,9 +194,9 @@ def train():
                 break
 
 
-    torch.save(model.state_dict(), "grasp_model_final.pth")
-    print("Saved final-epoch model to grasp_model_final.pth")
-    print(f"Best val accuracy achieved: {best_val_accuracy:.2%} (saved as grasp_model_best.pth)")
+    torch.save(model.state_dict(), "grasp_model_multigt_final.pth")
+    print("Saved final-epoch model to grasp_model_multigt_final.pth")
+    print(f"Best val accuracy achieved: {best_val_accuracy:.2%} (saved as grasp_model_multigt_best.pth)")
 
 
     plt.figure()
@@ -158,7 +206,7 @@ def train():
     plt.ylabel("loss")
     plt.legend()
     plt.title("Training loss")
-    plt.savefig("loss_curve.png")
+    plt.savefig("multigt_loss_curve.png")
     plt.show()
 
 
@@ -168,7 +216,7 @@ def train():
     plt.ylabel("accuracy")
     plt.legend()
     plt.title("Validation accuracy (real IoU+angle metric)")
-    plt.savefig("accuracy_curve.png")
+    plt.savefig("multigt_accuracy_curve.png")
     plt.show()
 
 
