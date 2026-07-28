@@ -6,52 +6,40 @@ import torch
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
-
-
-
 from model import GraspNet
 from grasp_dataset import GraspDataset
 from evaluate_baseline import is_correct_grasp
 from evaluate_cnn import preprocess, output_to_corners
 from data_loading import load_rgb, load_depth, parse_grasp_rectangles
 
-
 IMG_SIZE = 224
-
 
 #pads each image's different number of valid grasps
 def grasp_collate_fn(batch):
     images, target_lists = zip(*batch)
     max_targets = max(targets.shape[0] for targets in target_lists)
 
-
     padded_targets = torch.zeros(len(batch), max_targets, 6)
     target_mask = torch.zeros(len(batch), max_targets, dtype=torch.bool)
-
 
     for i, targets in enumerate(target_lists):
         count = targets.shape[0]
         padded_targets[i, :count] = targets
         target_mask[i, :count] = True
 
-
     return torch.stack(images), padded_targets, target_mask
-
 
 #uses the closest valid grasp instead of only the first annotation
 def grasp_loss(pred, targets, target_mask):
     expanded_pred = pred.unsqueeze(1)
 
-
     xy_loss = ((expanded_pred[:, :, :2] - targets[:, :, :2]) ** 2).mean(dim=2)
     wh_loss = ((expanded_pred[:, :, 2:4] - targets[:, :, 2:4]) ** 2).mean(dim=2)
     angle_loss = ((expanded_pred[:, :, 4:] - targets[:, :, 4:]) ** 2).mean(dim=2)
 
-
     all_losses = xy_loss + 3.0 * wh_loss + angle_loss
     all_losses = all_losses.masked_fill(~target_mask, float("inf"))
     return all_losses.min(dim=1).values.mean()
-
 
 #computes REAL validation accuracy using the same IoU+angle metric used
 #for the baseline and final evaluation -- not a loss proxy, the actual metric.

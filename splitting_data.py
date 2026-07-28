@@ -49,7 +49,6 @@ def split_data(pcd_ids, train = 0.70, val = 0.15):
 
    return train_set, val_set, test_set
 
-
 if __name__ == "__main__":
    id_list = get_ids()
    train_set, val_set, test_set = split_data(id_list)

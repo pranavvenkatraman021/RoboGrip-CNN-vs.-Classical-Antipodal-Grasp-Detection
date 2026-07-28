@@ -1,0 +1,100 @@
+{
+  "folder_stats": {
+    "01": {
+      "category": "Bottles / cans",
+      "total": 17,
+      "baseline_acc": 0.4118,
+      "cnn_acc": 0.5294
+    },
+    "02": {
+      "category": "Boxes / books",
+      "total": 12,
+      "baseline_acc": 0.1667,
+      "cnn_acc": 0.75
+    },
+    "03": {
+      "category": "Hammers / tools",
+      "total": 22,
+      "baseline_acc": 0.1364,
+      "cnn_acc": 0.6818
+    },
+    "04": {
+      "category": "Scissors / pliers",
+      "total": 15,
+      "baseline_acc": 0.2667,
+      "cnn_acc": 0.8667
+    },
+    "05": {
+      "category": "Mugs / cups",
+      "total": 9,
+      "baseline_acc": 0.4444,
+      "cnn_acc": 0.7778
+    },
+    "06": {
+      "category": "Staplers / misc",
+      "total": 10,
+      "baseline_acc": 0.3,
+      "cnn_acc": 0.9
+    },
+    "07": {
+      "category": "Bags / soft goods",
+      "total": 18,
+      "baseline_acc": 0.3333,
+      "cnn_acc": 0.8889
+    },
+    "08": {
+      "category": "Shoes / clothing",
+      "total": 15,
+      "baseline_acc": 0.7333,
+      "cnn_acc": 0.9333
+    },
+    "09": {
+      "category": "Electronics / flat",
+      "total": 6,
+      "baseline_acc": 0.1667,
+      "cnn_acc": 1.0
+    },
+    "10": {
+      "category": "Catch-all",
+      "total": 10,
+      "baseline_acc": 0.0,
+      "cnn_acc": 0.4
+    }
+  },
+  "group_stats": {
+    "Simple convex": {
+      "total": 29,
+      "baseline_acc": 0.3103,
+      "cnn_acc": 0.6207,
+      "gap_pp": 31.03
+    },
+    "Elongated / tools": {
+      "total": 37,
+      "baseline_acc": 0.1892,
+      "cnn_acc": 0.7568,
+      "gap_pp": 56.76
+    },
+    "Handled / irregular": {
+      "total": 19,
+      "baseline_acc": 0.3684,
+      "cnn_acc": 0.8421,
+      "gap_pp": 47.37
+    },
+    "Flat / deformable": {
+      "total": 33,
+      "baseline_acc": 0.5152,
+      "cnn_acc": 0.9091,
+      "gap_pp": 39.39
+    },
+    "Complex / misc": {
+      "total": 16,
+      "baseline_acc": 0.0625,
+      "cnn_acc": 0.625,
+      "gap_pp": 56.25
+    }
+  },
+  "overall": {
+    "baseline": 32.03,
+    "cnn": 72.39
+  }
+}

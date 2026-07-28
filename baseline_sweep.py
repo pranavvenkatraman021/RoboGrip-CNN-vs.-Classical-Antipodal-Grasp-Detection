@@ -29,7 +29,6 @@ SAMPLE_STEP = 4
 CACHE_FILE = "sweep_cache_val.pkl"
 SPLIT_KEY = "val"
 
-
 #builds or loads saved image data
 def build_cache(split_path="dataset_split.json", cache_file=CACHE_FILE):
     #loads the cache if it already exists
@@ -96,7 +95,6 @@ def unpack_mask(item):
     n = item["mask_shape"][0] * item["mask_shape"][1]
     return np.unpackbits(item["mask"])[:n].reshape(item["mask_shape"]).astype(bool)
 
-
 #computes all point pairs at once
 def precompute(item):
     p = item["points"]
@@ -155,7 +153,6 @@ def pick_pair(item, min_dist, max_dist, tie_break, mask_check=True, tie_tol=0.05
     a = item["points"][item["_i"][k]]
     b = item["points"][item["_j"][k]]
     return a, b, float(d[k]), float(s[k]), int(fin.sum()), int(valid.sum())
-
 
 if __name__ == "__main__":
     #loads and prepares cached data
