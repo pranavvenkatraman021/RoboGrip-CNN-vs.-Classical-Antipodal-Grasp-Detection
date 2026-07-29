@@ -41,11 +41,7 @@ def grasp_loss(pred, targets, target_mask):
     all_losses = all_losses.masked_fill(~target_mask, float("inf"))
     return all_losses.min(dim=1).values.mean()
 
-#computes REAL validation accuracy using the same IoU+angle metric used
-#for the baseline and final evaluation -- not a loss proxy, the actual metric.
-#Uses the SAME ROI-crop preprocessing as GraspDataset and evaluate_cnn.py,
-#so checkpoint selection stays consistent with how the model was trained
-#and how it's finally evaluated.
+#computes real validation accuracy using the same IoU+angle metric used
 def compute_val_accuracy(model, val_dataset, device):
     model.eval()
     correct = 0
@@ -59,25 +55,20 @@ def compute_val_accuracy(model, val_dataset, device):
             if len(gt_rects) == 0:
                 continue
 
-
             tensor, scale, pad_x, pad_y, x_off, y_off = preprocess(rgb, depth)
             tensor = tensor.to(device)
-
 
             output = model(tensor).squeeze(0).cpu().numpy()
             pred_corners = output_to_corners(
                 output, scale, pad_x, pad_y, x_off, y_off
             )
 
-
             total += 1
             if any(is_correct_grasp(pred_corners, gt) for gt in gt_rects):
                 correct += 1
 
-
     model.train()
     return correct / total if total > 0 else 0.0
-
 
 def train(): 
     seed = 42
@@ -88,17 +79,13 @@ def train():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
     with open("dataset_split.json", "r") as f: 
         split = json.load(f)
 
-
     train_dataset = GraspDataset(split["train"], augment=True)
     val_dataset = GraspDataset(split["val"], augment=False)
-
 
     train_loader = DataLoader(
         train_dataset,
@@ -113,7 +100,6 @@ def train():
         collate_fn=grasp_collate_fn
     )
 
-
     model = GraspNet().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
     num_epochs = 40
@@ -121,16 +107,13 @@ def train():
     val_losses = []
     val_accuracies = []
 
-
     best_val_accuracy = 0.0
     patience = 1000  #effectively disabled
     epochs_without_improvement = 0
 
-
     for epoch in range(num_epochs): 
         model.train()
         running_train_loss = 0.0
-
 
         for images, targets, target_mask in train_loader:
             images = images.to(device)
@@ -161,14 +144,11 @@ def train():
         avg_val_loss = running_val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
 
-
         #checkpoints on real accuracy
         val_accuracy = compute_val_accuracy(model, val_dataset, device)
         val_accuracies.append(val_accuracy)
 
-
         print(f"Epoch {epoch+1}/{num_epochs} — train loss: {avg_train_loss:.4f} — val loss: {avg_val_loss:.4f} — val accuracy: {val_accuracy:.2%}")
-
 
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
@@ -181,11 +161,9 @@ def train():
                 print(f"Early stopping at epoch {epoch+1}")
                 break
 
-
     torch.save(model.state_dict(), "grasp_model_multigt_final.pth")
     print("Saved final-epoch model to grasp_model_multigt_final.pth")
     print(f"Best val accuracy achieved: {best_val_accuracy:.2%} (saved as grasp_model_multigt_best.pth)")
-
 
     plt.figure()
     plt.plot(train_losses, label="train loss")
@@ -197,7 +175,6 @@ def train():
     plt.savefig("multigt_loss_curve.png")
     plt.show()
 
-
     plt.figure()
     plt.plot(val_accuracies, label="val accuracy", color="green")
     plt.xlabel("epoch")
@@ -206,7 +183,6 @@ def train():
     plt.title("Validation accuracy (real IoU+angle metric)")
     plt.savefig("multigt_accuracy_curve.png")
     plt.show()
-
 
 if __name__ == "__main__":
     train()
